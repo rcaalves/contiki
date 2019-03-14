@@ -313,6 +313,7 @@ enum {
   PACKETBUF_ATTR_MAC_SEQNO,
   PACKETBUF_ATTR_MAC_ACK,
   PACKETBUF_ATTR_IS_CREATED_AND_SECURED,
+  PACKETBUF_ATTR_L3_REQ_ACK,
   
   /* Scope 1 attributes: used between two neighbors only. */
 #if PACKETBUF_WITH_PACKET_TYPE

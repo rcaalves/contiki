@@ -87,6 +87,13 @@ NBR_TABLE(struct phase, nbr_phase);
 #define PRINTDEBUG(...)
 #endif
 /*---------------------------------------------------------------------------*/
+#if RDC_UNIDIR_SUPPORT
+void phase_update_unidir(const linkaddr_t *neighbor_outbound, rtimer_clock_t time) {
+  printf("phase_update_unidir: outbound neighbor: %04X, phase: %u \n", neighbor_outbound->u16, time);
+  phase_update(neighbor_outbound, time, MAC_TX_OK);
+}
+#endif
+/*---------------------------------------------------------------------------*/
 void
 phase_update(const linkaddr_t *neighbor, rtimer_clock_t time,
              int mac_status)
@@ -237,6 +244,57 @@ phase_wait(const linkaddr_t *neighbor, rtimer_clock_t cycle_time,
   }
   return PHASE_UNKNOWN;
 }
+
+#if RDC_UNIDIR_SUPPORT
+phase_status_t
+phase_wait_unidir(const linkaddr_t *neighbor, rtimer_clock_t cycle_time,
+           rtimer_clock_t guard_time, rtimer_clock_t cycle_start,
+           mac_callback_t mac_callback, void *mac_callback_ptr,
+           struct rdc_buf_list *buf_list)
+{
+  struct phase *e;
+  e = nbr_table_get_from_lladdr(nbr_phase, neighbor);
+  if(e != NULL) {
+    rtimer_clock_t wait, now, expected;
+    clock_time_t ctimewait;
+    
+    now = RTIMER_NOW();
+
+    wait = (now - cycle_start) + e->time;
+
+    // if(wait < guard_time) {
+    //   wait += cycle_time;
+    // }
+
+    ctimewait = (CLOCK_SECOND * (wait - guard_time)) / RTIMER_ARCH_SECOND;
+
+    if(ctimewait > PHASE_DEFER_THRESHOLD) {
+      struct phase_queueitem *p;
+      
+      p = memb_alloc(&queued_packets_memb);
+      if(p != NULL) {
+        if(buf_list == NULL) {
+          packetbuf_set_attr(PACKETBUF_ATTR_IS_CREATED_AND_SECURED, 1);
+          p->q = queuebuf_new_from_packetbuf();
+        }
+        p->mac_callback = mac_callback;
+        p->mac_callback_ptr = mac_callback_ptr;
+        p->buf_list = buf_list;
+        ctimer_set(&p->timer, ctimewait, send_packet, p);
+        return PHASE_DEFERRED;
+      }
+    }
+
+    expected = now + wait - guard_time;
+    if(!RTIMER_CLOCK_LT(expected, now)) {
+      /* Wait until the receiver is expected to be awake */
+      while(RTIMER_CLOCK_LT(RTIMER_NOW(), expected));
+    }
+    return PHASE_SEND_NOW;
+  }
+  return PHASE_UNKNOWN;
+}
+#endif
 /*---------------------------------------------------------------------------*/
 void
 phase_init(void)

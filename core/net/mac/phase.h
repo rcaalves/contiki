@@ -62,5 +62,13 @@ phase_status_t phase_wait(const linkaddr_t *neighbor,
 void phase_update(const linkaddr_t *neighbor,
                   rtimer_clock_t time, int mac_status);
 void phase_remove(const linkaddr_t *neighbor);
+#if RDC_UNIDIR_SUPPORT
+void phase_update_unidir(const linkaddr_t *neighbor_outbound, rtimer_clock_t time);
+phase_status_t phase_wait_unidir(const linkaddr_t *neighbor,
+                          rtimer_clock_t cycle_time, rtimer_clock_t wait_before,
+                          rtimer_clock_t cycle_start,
+                          mac_callback_t mac_callback, void *mac_callback_ptr,
+                          struct rdc_buf_list *buf_list);
+#endif
 
 #endif /* PHASE_H */

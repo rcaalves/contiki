@@ -46,6 +46,8 @@
 
 #include <stdio.h>
 
+#include "packetbuf.h"
+
 /*---------------------------------------------------------------------------*/
 PROCESS(example_unicast_process, "Example unicast");
 AUTOSTART_PROCESSES(&example_unicast_process);
@@ -53,8 +55,8 @@ AUTOSTART_PROCESSES(&example_unicast_process);
 static void
 recv_uc(struct unicast_conn *c, const linkaddr_t *from)
 {
-  printf("unicast message received from %d.%d\n",
-	 from->u8[0], from->u8[1]);
+  printf("unicast message received from %d.%d: %s\n",
+	 from->u8[0], from->u8[1], (char*) packetbuf_dataptr());
 }
 static const struct unicast_callbacks unicast_callbacks = {recv_uc};
 static struct unicast_conn uc;
@@ -69,13 +71,18 @@ PROCESS_THREAD(example_unicast_process, ev, data)
 
   while(1) {
     static struct etimer et;
+    static uint8_t msgcount = 0;
+    char mystr[20];
     linkaddr_t addr;
     
     etimer_set(&et, CLOCK_SECOND);
     
     PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&et));
 
-    packetbuf_copyfrom("Hello", 5);
+    sprintf(mystr, "Hello %d", msgcount++);
+    packetbuf_copyfrom(mystr, strlen(mystr)+1);
+    packetbuf_set_attr(PACKETBUF_ATTR_L3_REQ_ACK, 1);
+    packetbuf_set_attr(PACKETBUF_ATTR_MAC_ACK, 1);
     addr.u8[0] = 1;
     addr.u8[1] = 0;
     if(!linkaddr_cmp(&addr, &linkaddr_node_addr)) {

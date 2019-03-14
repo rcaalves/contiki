@@ -43,7 +43,14 @@
 #include "sys/rtimer.h"
 #include "net/mac/rdc.h"
 #include "dev/radio.h"
+#include "linkaddr.h"
+#include "netstack.h"
 
 extern const struct rdc_driver contikimac_driver;
+
+#if RDC_UNIDIR_SUPPORT
+typedef uint8_t (* unidir_phase_callback) (uint16_t, linkaddr_t);
+uint8_t set_unidir_phase_callback(unidir_phase_callback f);
+#endif
 
 #endif /* CONTIKIMAC_H */

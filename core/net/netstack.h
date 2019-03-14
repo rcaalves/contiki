@@ -83,6 +83,12 @@
 #endif /* NETSTACK_CONF_RDC_CHANNEL_CHECK_RATE */
 #endif /* NETSTACK_RDC_CHANNEL_CHECK_RATE */
 
+#ifndef RDC_CONF_UNIDIR_SUPPORT
+#define RDC_UNIDIR_SUPPORT 0
+#else
+#define RDC_UNIDIR_SUPPORT RDC_CONF_UNIDIR_SUPPORT
+#endif
+
 #if (NETSTACK_RDC_CHANNEL_CHECK_RATE & (NETSTACK_RDC_CHANNEL_CHECK_RATE - 1)) != 0
 #error NETSTACK_RDC_CONF_CHANNEL_CHECK_RATE must be a power of two (i.e., 1, 2, 4, 8, 16, 32, 64, ...).
 #error Change NETSTACK_RDC_CONF_CHANNEL_CHECK_RATE in contiki-conf.h, project-conf.h or in your Makefile.

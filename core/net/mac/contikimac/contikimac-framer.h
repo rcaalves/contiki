@@ -40,7 +40,14 @@
 #ifndef CONTIKIMAC_FRAMER_H_
 #define CONTIKIMAC_FRAMER_H_
 
+#include "net/netstack.h"
 #include "net/mac/framer.h"
+
+#ifdef RDC_UNIDIR_SUPPORT
+#include "sys/rtimer.h"
+void set_tx_offset(rtimer_clock_t offset);
+uint16_t get_tx_offset();
+#endif
 
 extern const struct framer contikimac_framer;
 

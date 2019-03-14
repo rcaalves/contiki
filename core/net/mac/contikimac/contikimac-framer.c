@@ -42,7 +42,7 @@
 #include "net/netstack.h"
 #include <string.h>
 
-#define CONTIKIMAC_ID 0x00
+#define CONTIKIMAC_ID 0xCC
 
 /* SHORTEST_PACKET_SIZE is the shortest packet that ContikiMAC
    allows. Packets have to be a certain size to be able to be detected
@@ -78,8 +78,30 @@ extern const struct framer DECORATED_FRAMER;
 struct hdr {
   uint8_t id;
   uint8_t len;
+#ifdef RDC_UNIDIR_SUPPORT
+  uint16_t tx_offset;
+#endif
 };
 
+/*---------------------------------------------------------------------------*/
+#ifdef RDC_UNIDIR_SUPPORT
+void 
+set_tx_offset(rtimer_clock_t offset)
+{
+  struct hdr *chdr;
+
+  chdr = (struct hdr *)(packetbuf_hdrptr() + DECORATED_FRAMER.length());
+  chdr->tx_offset = offset;
+}
+uint16_t
+get_tx_offset()
+{
+  struct hdr *chdr;
+    
+  chdr = (struct hdr *)(packetbuf_hdrptr() + DECORATED_FRAMER.length());
+  return chdr->tx_offset;
+}
+#endif
 /*---------------------------------------------------------------------------*/
 static int
 hdr_length(void)
@@ -100,6 +122,9 @@ create(void)
   chdr = packetbuf_hdrptr();
   chdr->id = CONTIKIMAC_ID;
   chdr->len = 0;
+#ifdef RDC_UNIDIR_SUPPORT
+  chdr->tx_offset = 0;
+#endif
   
   hdr_len = DECORATED_FRAMER.create();
   if(hdr_len < 0) {
@@ -175,6 +200,7 @@ parse(void)
   
   packetbuf_set_datalen(chdr->len);
   chdr->len = 0;
+  // printf("Received phase: %d %X %X\n", chdr->tx_offset, chdr->tx_offset, get_tx_offset());
   
   return hdr_len + sizeof(struct hdr);
 }
