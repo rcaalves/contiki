@@ -57,6 +57,9 @@ struct phase {
 #endif
   uint8_t noacks;
   struct timer noacks_timer;
+#if RDC_UNIDIR_SUPPORT
+  uint8_t is_unidir;
+#endif
 };
 
 struct phase_queueitem {
@@ -77,7 +80,7 @@ struct phase_queueitem {
 MEMB(queued_packets_memb, struct phase_queueitem, PHASE_QUEUESIZE);
 NBR_TABLE(struct phase, nbr_phase);
 
-#define DEBUG 0
+#define DEBUG 1
 #if DEBUG
 #include <stdio.h>
 #define PRINTF(...) printf(__VA_ARGS__)
@@ -90,7 +93,39 @@ NBR_TABLE(struct phase, nbr_phase);
 #if RDC_UNIDIR_SUPPORT
 void phase_update_unidir(const linkaddr_t *neighbor_outbound, rtimer_clock_t time) {
   printf("phase_update_unidir: outbound neighbor: %04X, phase: %u \n", neighbor_outbound->u16, time);
-  phase_update(neighbor_outbound, time, MAC_TX_OK);
+  // phase_update(neighbor_outbound, time, MAC_TX_OK);
+  struct phase *e;
+
+  /* If we have an entry for this neighbor already, we renew it. */
+  e = nbr_table_get_from_lladdr(nbr_phase, neighbor_outbound);
+  if(e != NULL) {
+#if PHASE_DRIFT_CORRECT
+    e->drift = time-e->time;
+#endif
+    e->time = time;
+    e->noacks = 0;
+    e->is_unidir = 1;
+  } else {
+    e = nbr_table_add_lladdr(nbr_phase, neighbor_outbound);
+    if(e) {
+      e->time = time;
+#if PHASE_DRIFT_CORRECT
+      e->drift = 0;
+#endif
+      e->noacks = 0;
+      e->is_unidir = 1;
+    }
+  }
+}
+
+uint8_t phase_is_unidir(const linkaddr_t *neighbor) {
+  struct phase *e;
+
+  e = nbr_table_get_from_lladdr(nbr_phase, neighbor);
+  if(e != NULL) {
+    return e->is_unidir;
+  }
+  return 0;
 }
 #endif
 /*---------------------------------------------------------------------------*/
@@ -103,6 +138,7 @@ phase_update(const linkaddr_t *neighbor, rtimer_clock_t time,
   /* If we have an entry for this neighbor already, we renew it. */
   e = nbr_table_get_from_lladdr(nbr_phase, neighbor);
   if(e != NULL) {
+    e->is_unidir = 0;
     if(mac_status == MAC_TX_OK) {
 #if PHASE_DRIFT_CORRECT
       e->drift = time-e->time;
@@ -133,9 +169,12 @@ phase_update(const linkaddr_t *neighbor, rtimer_clock_t time,
       if(e) {
         e->time = time;
 #if PHASE_DRIFT_CORRECT
-      e->drift = 0;
+        e->drift = 0;
 #endif
-      e->noacks = 0;
+        e->noacks = 0;
+#if RDC_UNIDIR_SUPPORT
+        e->is_unidir = 0;
+#endif
       }
     }
   }
@@ -173,21 +212,21 @@ phase_wait(const linkaddr_t *neighbor, rtimer_clock_t cycle_time,
   if(e != NULL) {
     rtimer_clock_t wait, now, expected, sync;
     clock_time_t ctimewait;
-    
+
     /* We expect phases to happen every CYCLE_TIME time
        units. The next expected phase is at time e->time +
        CYCLE_TIME. To compute a relative offset, we subtract
        with clock_time(). Because we are only interested in turning
        on the radio within the CYCLE_TIME period, we compute the
        waiting time with modulo CYCLE_TIME. */
-    
+
     /*      printf("neighbor phase 0x%02x (cycle 0x%02x)\n", e->time & (cycle_time - 1),
             cycle_time);*/
 
     /*      if(e->noacks > 0) {
             printf("additional wait %d\n", additional_wait);
             }*/
-    
+
     now = RTIMER_NOW();
 
     sync = (e == NULL) ? now : e->time;
@@ -220,7 +259,7 @@ phase_wait(const linkaddr_t *neighbor, rtimer_clock_t cycle_time,
 
     if(ctimewait > PHASE_DEFER_THRESHOLD) {
       struct phase_queueitem *p;
-      
+
       p = memb_alloc(&queued_packets_memb);
       if(p != NULL) {
         if(buf_list == NULL) {
@@ -257,20 +296,29 @@ phase_wait_unidir(const linkaddr_t *neighbor, rtimer_clock_t cycle_time,
   if(e != NULL) {
     rtimer_clock_t wait, now, expected;
     clock_time_t ctimewait;
-    
+
     now = RTIMER_NOW();
 
-    wait = (now - cycle_start) + e->time;
+    wait = e->time - (now - cycle_start);
 
-    // if(wait < guard_time) {
-    //   wait += cycle_time;
-    // }
+    if (e->time < (now - cycle_start)) {
+      wait += cycle_time;
+    }
 
-    ctimewait = (CLOCK_SECOND * (wait - guard_time)) / RTIMER_ARCH_SECOND;
+    if(wait < guard_time) {
+      wait += cycle_time;
+    }
+
+    if ( (wait - guard_time) < 512) {
+      ctimewait = (CLOCK_SECOND * (wait - guard_time)) / RTIMER_ARCH_SECOND;
+    } else {
+      ctimewait = ((wait - guard_time) / RTIMER_ARCH_SECOND) * CLOCK_SECOND;
+    }
 
     if(ctimewait > PHASE_DEFER_THRESHOLD) {
       struct phase_queueitem *p;
-      
+      // printf("phase deferered! ctimewait %lu (wait %u, e->time %u, now %u, cycle_start %u, guard %u)\n", ctimewait, wait, e->time, now, cycle_start, guard_time);
+
       p = memb_alloc(&queued_packets_memb);
       if(p != NULL) {
         if(buf_list == NULL) {
@@ -295,6 +343,14 @@ phase_wait_unidir(const linkaddr_t *neighbor, rtimer_clock_t cycle_time,
   return PHASE_UNKNOWN;
 }
 #endif
+/*---------------------------------------------------------------------------*/
+void phase_remove(const linkaddr_t *neighbor) {
+  struct phase *e;
+  e = nbr_table_get_from_lladdr(nbr_phase, neighbor);
+  if(e != NULL) {
+    nbr_table_remove(nbr_phase, e);
+  }
+}
 /*---------------------------------------------------------------------------*/
 void
 phase_init(void)

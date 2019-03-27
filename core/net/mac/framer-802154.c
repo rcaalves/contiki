@@ -113,7 +113,7 @@ create_frame(int type, int do_create)
 
   /* Insert IEEE 802.15.4 (2006) version bits. */
   params.fcf.frame_version = FRAME802154_IEEE802154_2006;
-  
+
 #if LLSEC802154_SECURITY_LEVEL
   if(packetbuf_attr(PACKETBUF_ATTR_SECURITY_LEVEL)) {
     params.fcf.security_enabled = 1;
@@ -223,12 +223,12 @@ parse(void)
 {
   frame802154_t frame;
   int hdr_len;
-  
+
   hdr_len = frame802154_parse(packetbuf_dataptr(), packetbuf_datalen(), &frame);
-  
+
   if(hdr_len && packetbuf_hdrreduce(hdr_len)) {
     packetbuf_set_attr(PACKETBUF_ATTR_FRAME_TYPE, frame.fcf.frame_type);
-    
+
     if(frame.fcf.dest_addr_mode) {
       if(frame.dest_pid != mac_src_pan_id &&
           frame.dest_pid != FRAME802154_BROADCASTPANDID) {
@@ -243,10 +243,11 @@ parse(void)
     packetbuf_set_addr(PACKETBUF_ADDR_SENDER, (linkaddr_t *)&frame.src_addr);
     packetbuf_set_attr(PACKETBUF_ATTR_PENDING, frame.fcf.frame_pending);
     packetbuf_set_attr(PACKETBUF_ATTR_MAC_SEQNO, frame.seq);
+    packetbuf_set_attr(PACKETBUF_ATTR_MAC_ACK, frame.fcf.ack_required);
 #if NETSTACK_CONF_WITH_RIME
     packetbuf_set_attr(PACKETBUF_ATTR_PACKET_ID, frame.seq);
 #endif
-    
+
 #if LLSEC802154_SECURITY_LEVEL
     if(frame.fcf.security_enabled) {
       packetbuf_set_attr(PACKETBUF_ATTR_SECURITY_LEVEL, frame.aux_hdr.security_control.security_level);
@@ -264,7 +265,7 @@ parse(void)
     PRINTADDR(packetbuf_addr(PACKETBUF_ADDR_SENDER));
     PRINTADDR(packetbuf_addr(PACKETBUF_ADDR_RECEIVER));
     PRINTF("%d %u (%u)\n", hdr_len, packetbuf_datalen(), packetbuf_totlen());
-    
+
     return hdr_len;
   }
   return FRAMER_FAILED;

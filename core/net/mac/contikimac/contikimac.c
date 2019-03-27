@@ -82,7 +82,7 @@
 // #warning "RDC_CONF_HARDWARE_ACK = treu"
 // #else
 // #warning "RDC_CONF_HARDWARE_ACK = false"
-// #endif 
+// #endif
 
 /* MCU can sleep during radio off */
 #ifndef RDC_CONF_MCU_SLEEP
@@ -232,7 +232,7 @@ static volatile uint8_t contikimac_keep_radio_on = 0;
 static volatile unsigned char we_are_sending = 0;
 static volatile unsigned char radio_is_on = 0;
 
-#define DEBUG 1
+#define DEBUG 0
 #if DEBUG
 #include <stdio.h>
 #define PRINTF(...) printf(__VA_ARGS__)
@@ -260,14 +260,31 @@ static int broadcast_rate_counter;
 #endif /* CONTIKIMAC_CONF_BROADCAST_RATE_LIMIT */
 
 #if RDC_UNIDIR_SUPPORT
+#ifndef PHASE_SEND_THRESHOLD
+#define PHASE_SEND_THRESHOLD ((MAX_PHASE_STROBE_TIME)/5)
+#endif
+LIST(outbound_phases_list);
+struct ob_phase {
+  void* next;
+  uint16_t phase;
+  linkaddr_t neighbor;
+};
+MEMB(obn, struct ob_phase, 8);
 static unidir_phase_callback send_phase = NULL;
+// static is_neighbor_bidir_callback is_neighbor_bidir = NULL;
+static volatile uint8_t skip_phase_assessment = 0;
+/*---------------------------------------------------------------------------*/
+// uint8_t set_is_neighbor_bidir_callback(is_neighbor_bidir_callback f) {
+//   is_neighbor_bidir = f;
+//   return 0;
+// }
 /*---------------------------------------------------------------------------*/
 uint8_t set_unidir_phase_callback(unidir_phase_callback f)
 {
   send_phase = f;
   return 0;
 }
-#endif
+#endif /* RDC_UNIDIR_SUPPORT */
 /*---------------------------------------------------------------------------*/
 static void
 on(void)
@@ -334,7 +351,7 @@ powercycle_turn_radio_off(void)
 #if CONTIKIMAC_CONF_COMPOWER
   uint8_t was_on = radio_is_on;
 #endif /* CONTIKIMAC_CONF_COMPOWER */
-  
+
   if(we_are_sending == 0 && we_are_receiving_burst == 0) {
     off();
 #if CONTIKIMAC_CONF_COMPOWER
@@ -397,6 +414,13 @@ powercycle(struct rtimer *t, void *ptr)
 
     packet_seen = 0;
     // printf("renan2: %u %u %u %u\n",RTIMER_NOW(), cycle_start, CYCLE_TIME, RTIMER_ARCH_SECOND);
+
+#if RDC_UNIDIR_SUPPORT
+    if (skip_phase_assessment && we_are_sending == 0 && we_are_receiving_burst == 0) {
+      // printf("phase: set skip_phase_assessment to 0\n");
+      skip_phase_assessment = 0;
+    }
+#endif
 
     for(count = 0; count < CCA_COUNT_MAX; ++count) {
       if(we_are_sending == 0 && we_are_receiving_burst == 0) {
@@ -530,7 +554,7 @@ send_packet(mac_callback_t mac_callback, void *mac_callback_ptr,
 #if WITH_PHASE_OPTIMIZATION
   rtimer_clock_t encounter_time = 0;
 #endif
-  rtimer_clock_t strobe_time;
+  // rtimer_clock_t strobe_time;
   int strobes;
   uint8_t got_strobe_ack = 0;
   int len;
@@ -541,17 +565,22 @@ send_packet(mac_callback_t mac_callback, void *mac_callback_ptr,
   int ret;
   uint8_t contikimac_was_on;
   uint8_t seqno;
-  
+
   /* Exit if RDC and radio were explicitly turned off */
    if(!contikimac_is_on && !contikimac_keep_radio_on) {
     PRINTF("contikimac: radio is turned off\n");
     return MAC_TX_ERR_FATAL;
   }
- 
+
   if(packetbuf_totlen() == 0) {
     PRINTF("contikimac: send_packet data len 0\n");
     return MAC_TX_ERR_FATAL;
   }
+
+#if RDC_UNIDIR_SUPPORT
+  // printf("phase: set skip_phase_assessment to 1\n");
+  skip_phase_assessment = 1;
+#endif
 
 #if !NETSTACK_CONF_BRIDGE_MODE
   /* If NETSTACK_CONF_BRIDGE_MODE is set, assume PACKETBUF_ADDR_SENDER is already set. */
@@ -593,8 +622,10 @@ send_packet(mac_callback_t mac_callback, void *mac_callback_ptr,
       return MAC_TX_ERR_FATAL;
     }
   }
-  // set_tx_offset(0xEEEE);
-  
+
+  if ( packetbuf_attr(PACKETBUF_ATTR_L3_REQ_ACK) == phase_is_unidir(packetbuf_addr(PACKETBUF_ADDR_RECEIVER)) ) {
+    phase_remove(packetbuf_addr(PACKETBUF_ADDR_RECEIVER));
+  }
 
   // printf("ptrprint: %p (11) %p\n", &(((uint8_t*)packetbuf_hdrptr())[11]), &(((uint8_t*)packetbuf_hdrptr())[12]) );
   // printf("ptrprint: %p (packetbuf_dataptr)\n", packetbuf_dataptr());
@@ -609,20 +640,20 @@ send_packet(mac_callback_t mac_callback, void *mac_callback_ptr,
   // printf("renanX:");
   // for(i=0; i<transmit_len; i++) {
   //   if (i%4 == 0)
-  //     printf(" ");  
+  //     printf(" ");
   //   printf("%02X", ((uint8_t*)packetbuf_hdrptr())[i]);
   // }
   // printf("\n");
-  
+
   if(!is_broadcast && !is_receiver_awake) {
 #if WITH_PHASE_OPTIMIZATION
-// #if RDC_UNIDIR_SUPPORT
-//     if (packetbuf_attr(PACKETBUF_ATTR_MAC_ACK) == 0)
-//       ret = phase_wait_unidir(packetbuf_addr(PACKETBUF_ADDR_RECEIVER),
-//                      CYCLE_TIME, GUARD_TIME, cycle_start,
-//                      mac_callback, mac_callback_ptr, buf_list);
-//     else
-// #endif /* RDC_UNIDIR_SUPPORT */
+#if RDC_UNIDIR_SUPPORT
+    if (packetbuf_attr(PACKETBUF_ATTR_MAC_ACK) == 0)
+      ret = phase_wait_unidir(packetbuf_addr(PACKETBUF_ADDR_RECEIVER),
+                     CYCLE_TIME, MAX_PHASE_STROBE_TIME/2, cycle_start,
+                     mac_callback, mac_callback_ptr, buf_list);
+    else
+#endif /* RDC_UNIDIR_SUPPORT */
     ret = phase_wait(packetbuf_addr(PACKETBUF_ADDR_RECEIVER),
                      CYCLE_TIME, GUARD_TIME,
                      mac_callback, mac_callback_ptr, buf_list);
@@ -633,9 +664,9 @@ send_packet(mac_callback_t mac_callback, void *mac_callback_ptr,
     if(ret != PHASE_UNKNOWN) {
       is_known_receiver = 1;
     }
-#endif /* WITH_PHASE_OPTIMIZATION */ 
+#endif /* WITH_PHASE_OPTIMIZATION */
   }
-  
+
 
 
   /* By setting we_are_sending to one, we ensure that the rtimer
@@ -653,7 +684,7 @@ send_packet(mac_callback_t mac_callback, void *mac_callback_ptr,
            NETSTACK_RADIO.receiving_packet(), NETSTACK_RADIO.pending_packet());
     return MAC_TX_COLLISION;
   }
-  
+
   /* Switch off the radio to ensure that we didn't start sending while
      the radio was doing a channel check. */
   off();
@@ -713,19 +744,12 @@ send_packet(mac_callback_t mac_callback, void *mac_callback_ptr,
 //#endif
   on();
 
-#if RDC_UNIDIR_SUPPORT
-  if (packetbuf_attr(PACKETBUF_ATTR_MAC_ACK) == 0 && is_known_receiver == 1) {
-    strobe_time = STROBE_TIME; //TODO: calculate amount of time that sender should send
-  } else 
-#endif
-    strobe_time = STROBE_TIME;
-  
   watchdog_periodic();
   t0 = RTIMER_NOW();
   seqno = packetbuf_attr(PACKETBUF_ATTR_MAC_SEQNO);
   for(strobes = 0, collisions = 0;
       got_strobe_ack == 0 && collisions == 0 &&
-      RTIMER_CLOCK_LT(RTIMER_NOW(), t0 + strobe_time); strobes++) {
+      RTIMER_CLOCK_LT(RTIMER_NOW(), t0 + STROBE_TIME); strobes++) {
 
     watchdog_periodic();
 
@@ -783,7 +807,7 @@ send_packet(mac_callback_t mac_callback, void *mac_callback_ptr,
       wt = RTIMER_NOW();
 
 #if RDC_UNIDIR_SUPPORT
-      set_tx_offset(txtime - cycle_start);
+      set_tx_offset(txtime - cycle_start, is_known_receiver);
       NETSTACK_RADIO.prepare(packetbuf_hdrptr(), transmit_len);
 #endif
       while(RTIMER_CLOCK_LT(RTIMER_NOW(), wt + INTER_PACKET_INTERVAL)) { }
@@ -882,7 +906,7 @@ qsend_list(mac_callback_t sent, void *ptr, struct rdc_buf_list *buf_list)
   struct rdc_buf_list *next;
   int ret;
   int is_receiver_awake;
-  
+
   if(buf_list == NULL) {
     return;
   }
@@ -894,7 +918,7 @@ qsend_list(mac_callback_t sent, void *ptr, struct rdc_buf_list *buf_list)
     mac_call_sent_callback(sent, ptr, MAC_TX_COLLISION, 1);
     return;
   }
-  
+
   /* Create and secure frames in advance */
   curr = buf_list;
   do {
@@ -920,7 +944,7 @@ qsend_list(mac_callback_t sent, void *ptr, struct rdc_buf_list *buf_list)
     }
     curr = next;
   } while(next != NULL);
-  
+
   /* The receiver needs to be awoken before we send */
   is_receiver_awake = 0;
   curr = buf_list;
@@ -929,7 +953,7 @@ qsend_list(mac_callback_t sent, void *ptr, struct rdc_buf_list *buf_list)
 
     /* Prepare the packetbuf */
     queuebuf_to_packetbuf(curr->buf);
-    
+
     /* Send the current packet */
     ret = send_packet(sent, ptr, curr, is_receiver_awake);
     if(ret != MAC_TX_DEFERRED) {
@@ -972,10 +996,11 @@ input_packet(void)
 
 #if RDC_UNIDIR_SUPPORT
   uint16_t phase_shift;
+  uint8_t sender_knows_phase;
   rtimer_clock_t got_pkt_time = RTIMER_NOW();
 #endif
 
-#if CONTIKIMAC_SEND_SW_ACK | RDC_UNIDIR_SUPPORT
+#if CONTIKIMAC_SEND_SW_ACK //| RDC_UNIDIR_SUPPORT
   int original_datalen;
   original_datalen = packetbuf_datalen();
 #endif
@@ -1007,6 +1032,9 @@ input_packet(void)
          be disabled upon receipt of an unauthentic frame. */
       we_are_receiving_burst = packetbuf_attr(PACKETBUF_ATTR_PENDING);
       if(we_are_receiving_burst) {
+#if RDC_UNIDIR_SUPPORT
+        skip_phase_assessment = 1;
+#endif
         on();
         /* Set a timer to turn the radio off in case we do not receive
 	   a next packet */
@@ -1064,27 +1092,84 @@ input_packet(void)
 #endif /* CONTIKIMAC_SEND_SW_ACK */
 
       if(!duplicate) {
+#if RDC_UNIDIR_SUPPORT
+        replace_seqno();
+#endif
         NETSTACK_MAC.input();
       }
 
 #if RDC_UNIDIR_SUPPORT
-      // (RTIMER_SECOND * (packetbuf_totlen()+8) * 8) / 250000 
+      if (skip_phase_assessment) {
+        printf("phase: skip_phase_assessment\n");
+        return;
+      }
+      skip_phase_assessment = 1;
+      // (RTIMER_SECOND * (packetbuf_totlen()+8) * 8) / 250000
       // + 8 is to include SHR, PHR and FCS (none of which are included in packetbuf_totlen())
       // if RTIMER_SECOND = 32768 as in sky mote, the multiplying constant is 1.048576
-      uint32_t packet_len_in_ticks = (original_datalen+8) * 1.048576; //(  (( ((uint32_t)RTIMER_SECOND)*4 )/125)  * (packetbuf_totlen()+8) / 1000;
-      phase_shift = get_tx_offset() - (got_pkt_time - cycle_start);
-      printf("Received phase: %5d (%4X) %5u delta: %u, packetlen: %lu\n", 
-              get_tx_offset(),
-              get_tx_offset(),
+      // uint32_t packet_len_in_ticks = (original_datalen+8) * 1.048576; //(  (( ((uint32_t)RTIMER_SECOND)*4 )/125)  * (packetbuf_totlen()+8) / 1000;
+      // ==> don't have to compensate for packet_len since we are already receiving the previous phase
+      phase_shift = get_tx_offset(&sender_knows_phase) - (got_pkt_time - cycle_start);
+
+      PRINTF("Received phase from %04X (seqno_ind: %d): %5d (%4X) %5u delta: %u, (RX after %u, sender_knows_phase %u, bcast %u, ack %u)\n", packetbuf_addr(PACKETBUF_ADDR_SENDER)->u16,
+              get_ind_seqno(),
+              get_tx_offset(NULL),
+              get_tx_offset(NULL),
               got_pkt_time - cycle_start,
               phase_shift,
-              packet_len_in_ticks
+              // packet_len_in_ticks,
+              (got_pkt_time - cycle_start),
+              sender_knows_phase,
+              packetbuf_holds_broadcast(),
+              packetbuf_attr(PACKETBUF_ATTR_MAC_ACK)
             );
-      static uint8_t banana = 0;
-      if (send_phase != NULL && (banana ++ % 2 == 0) )//&& !(linkaddr_node_addr.u8[0] == 1))
-        send_phase(phase_shift, *packetbuf_addr(PACKETBUF_ADDR_SENDER));
+
+      if (send_phase == NULL || get_tx_offset(NULL) == 0 || (!packetbuf_holds_broadcast() && packetbuf_attr(PACKETBUF_ATTR_MAC_ACK)) )
+        return;
+
+      // if (is_neighbor_bidir != NULL && is_neighbor_bidir(packetbuf_addr(PACKETBUF_ADDR_SENDER))) {
+      //   return;
+      // }
+
+      if (phase_shift > CYCLE_TIME) {
+        PRINTF("phase_shift is too large... bailing out\n");
+        return;
+      }
+
+      struct ob_phase * l = list_head(outbound_phases_list);
+      while (l != NULL) {
+        if (linkaddr_cmp(&l->neighbor, packetbuf_addr(PACKETBUF_ADDR_SENDER))) {
+          break;
+        }
+        l = list_item_next(l);
+      }
+      if (l) {
+        // inbound neighbor is known
+        uint16_t diff;
+        if (phase_shift > l->phase)
+          diff = phase_shift - l->phase;
+        else
+          diff = l->phase - phase_shift;
+        if (diff > PHASE_SEND_THRESHOLD || (!packetbuf_holds_broadcast() && !sender_knows_phase)) {
+          l->phase = phase_shift;
+          send_phase(phase_shift, *packetbuf_addr(PACKETBUF_ADDR_SENDER));
+        } else {
+          PRINTF("phase did not shift enough to trigger a transmission\n");
+        }
+
+      } else if(!packetbuf_holds_broadcast() || sender_knows_phase) {
+        // first time we hear this inbound neighbor
+        //  if (sender_knows_phase) means the device probably restarted and the phase is different
+        l = memb_alloc(&obn);
+        if (l) {
+          l->phase = phase_shift;
+          linkaddr_copy(&l->neighbor, packetbuf_addr(PACKETBUF_ADDR_SENDER));
+          list_add(outbound_phases_list, l);
+          send_phase(phase_shift, *packetbuf_addr(PACKETBUF_ADDR_SENDER));
+        }
+      }
 #endif
-      
+
       return;
     } else {
       PRINTDEBUG("contikimac: data not for us\n");
@@ -1109,6 +1194,10 @@ init(void)
   phase_init();
 #endif /* WITH_PHASE_OPTIMIZATION */
 
+#if RDC_UNIDIR_SUPPORT
+  list_init(outbound_phases_list);
+  memb_init(&obn);
+#endif
 }
 /*---------------------------------------------------------------------------*/
 static int

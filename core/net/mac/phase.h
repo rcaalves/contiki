@@ -64,6 +64,7 @@ void phase_update(const linkaddr_t *neighbor,
 void phase_remove(const linkaddr_t *neighbor);
 #if RDC_UNIDIR_SUPPORT
 void phase_update_unidir(const linkaddr_t *neighbor_outbound, rtimer_clock_t time);
+uint8_t phase_is_unidir(const linkaddr_t *neighbor_outbound);
 phase_status_t phase_wait_unidir(const linkaddr_t *neighbor,
                           rtimer_clock_t cycle_time, rtimer_clock_t wait_before,
                           rtimer_clock_t cycle_start,

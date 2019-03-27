@@ -51,6 +51,8 @@ extern const struct rdc_driver contikimac_driver;
 #if RDC_UNIDIR_SUPPORT
 typedef uint8_t (* unidir_phase_callback) (uint16_t, linkaddr_t);
 uint8_t set_unidir_phase_callback(unidir_phase_callback f);
+// typedef uint8_t (* is_neighbor_bidir_callback) (linkaddr_t);
+// uint8_t set_is_neighbor_bidir_callback(is_neighbor_bidir_callback f);
 #endif
 
 #endif /* CONTIKIMAC_H */

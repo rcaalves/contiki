@@ -45,8 +45,10 @@
 
 #ifdef RDC_UNIDIR_SUPPORT
 #include "sys/rtimer.h"
-void set_tx_offset(rtimer_clock_t offset);
-uint16_t get_tx_offset();
+void set_tx_offset(rtimer_clock_t offset, uint8_t is_known_receiver);
+uint16_t get_tx_offset(uint8_t *is_known_receiver_ret);
+uint8_t get_ind_seqno();
+void replace_seqno();
 #endif
 
 extern const struct framer contikimac_framer;

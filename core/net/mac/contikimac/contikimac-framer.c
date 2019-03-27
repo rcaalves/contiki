@@ -63,8 +63,23 @@
 #define DECORATED_FRAMER framer_802154
 #endif /* CONTIKIMAC_FRAMER_CONF_DECORATED_FRAMER */
 
-extern const struct framer DECORATED_FRAMER;
+#define MAX_N_SEQNOS 16
 
+
+#if RDC_UNIDIR_SUPPORT
+struct seqno {
+  linkaddr_t receiver;
+  uint8_t seqno;
+};
+
+static struct seqno sent_seqnos[MAX_N_SEQNOS];
+static uint8_t seqno_count = 0;
+static uint8_t bcast_seqno = 1;
+#endif
+
+
+extern const struct framer DECORATED_FRAMER;
+#include <stdio.h>
 #define DEBUG 0
 #if DEBUG
 #include <stdio.h>
@@ -80,26 +95,96 @@ struct hdr {
   uint8_t len;
 #ifdef RDC_UNIDIR_SUPPORT
   uint16_t tx_offset;
+  uint8_t seqno_ind;
 #endif
-};
+} __attribute__((packed));
 
 /*---------------------------------------------------------------------------*/
-#ifdef RDC_UNIDIR_SUPPORT
-void 
-set_tx_offset(rtimer_clock_t offset)
+#if RDC_UNIDIR_SUPPORT
+void
+set_tx_offset(rtimer_clock_t offset, uint8_t is_known_receiver)
 {
   struct hdr *chdr;
+
+  offset = offset | (is_known_receiver << 15);
 
   chdr = (struct hdr *)(packetbuf_hdrptr() + DECORATED_FRAMER.length());
   chdr->tx_offset = offset;
 }
 uint16_t
-get_tx_offset()
+get_tx_offset(uint8_t *is_known_receiver_ret)
 {
   struct hdr *chdr;
-    
+
   chdr = (struct hdr *)(packetbuf_hdrptr() + DECORATED_FRAMER.length());
-  return chdr->tx_offset;
+
+  if(is_known_receiver_ret)
+    *is_known_receiver_ret = (chdr->tx_offset & 0x8000) >> 15;
+  return (chdr->tx_offset & 0x7FFF);
+}
+void
+set_ind_seqno_hdr(uint8_t seqno)
+{
+  struct hdr *chdr;
+
+  chdr = (struct hdr *)(packetbuf_hdrptr() + DECORATED_FRAMER.length());
+  chdr->seqno_ind = seqno;
+}
+uint8_t
+get_ind_seqno()
+{
+  struct hdr *chdr;
+
+  chdr = (struct hdr *)(packetbuf_hdrptr() + DECORATED_FRAMER.length());
+  return chdr->seqno_ind;
+}
+void
+replace_seqno()
+{
+  struct hdr *chdr;
+  chdr = (struct hdr *)(packetbuf_hdrptr() + DECORATED_FRAMER.length());
+  packetbuf_set_attr(PACKETBUF_ATTR_MAC_SEQNO, chdr->seqno_ind);
+}
+void
+set_ind_seqno(void)
+{
+  int i;
+
+  printf("%d ", packetbuf_addr(PACKETBUF_ADDR_RECEIVER)->u16);
+  if(packetbuf_holds_broadcast()) {
+    set_ind_seqno_hdr(bcast_seqno++);
+    return;
+  }
+
+  /*
+   * Check for duplicate packet by comparing the sequence number of the incoming
+   * packet with the last few ones we saw.
+   */
+  for(i = 0; i < seqno_count; ++i) {
+    // printf("loop %04u %04u\n", packetbuf_addr(PACKETBUF_ADDR_RECEIVER)->u16, sent_seqnos[i].receiver.u16);
+    if(linkaddr_cmp(packetbuf_addr(PACKETBUF_ADDR_RECEIVER), &sent_seqnos[i].receiver)) {
+      // printf("deu match\n");
+      set_ind_seqno_hdr(++sent_seqnos[i].seqno);
+      return;
+    }
+  }
+  // printf("num deu match\n");
+
+  if (seqno_count == MAX_N_SEQNOS) {
+    set_ind_seqno_hdr(1);
+    return;
+  }
+
+  // for(i = 0; i < seqno_count && i < MAX_N_SEQNOS -1; ++i) {
+  for(i = seqno_count; i > 0; i--) {
+    memcpy(&sent_seqnos[i], &sent_seqnos[i-1], sizeof(struct seqno));
+  }
+  seqno_count ++;
+  // if (seqno_count > MAX_N_SEQNOS)
+  //   seqno_count = MAX_N_SEQNOS;
+  sent_seqnos[0].seqno = 1;
+  set_ind_seqno_hdr(sent_seqnos[0].seqno);
+  linkaddr_copy(&sent_seqnos[0].receiver, packetbuf_addr(PACKETBUF_ADDR_RECEIVER));
 }
 #endif
 /*---------------------------------------------------------------------------*/
@@ -114,7 +199,7 @@ create(void)
 {
   struct hdr *chdr;
   int hdr_len;
-  
+
   if(packetbuf_hdralloc(sizeof(struct hdr)) == 0) {
     PRINTF("contikimac-framer: too large header\n");
     return FRAMER_FAILED;
@@ -125,13 +210,13 @@ create(void)
 #ifdef RDC_UNIDIR_SUPPORT
   chdr->tx_offset = 0;
 #endif
-  
+
   hdr_len = DECORATED_FRAMER.create();
   if(hdr_len < 0) {
     PRINTF("contikimac-framer: decorated framer failed\n");
     return FRAMER_FAILED;
   }
-  
+
   return hdr_len + sizeof(struct hdr);
 }
 /*---------------------------------------------------------------------------*/
@@ -141,7 +226,7 @@ pad(void)
   int transmit_len;
   uint8_t *ptr;
   uint8_t zeroes_count;
-  
+
   transmit_len = packetbuf_totlen();
   if(transmit_len < SHORTEST_PACKET_SIZE) {
     /* Padding required */
@@ -157,22 +242,23 @@ create_and_secure(void)
 {
   struct hdr *chdr;
   int hdr_len;
-  
+
   hdr_len = create();
   if(hdr_len < 0) {
     return FRAMER_FAILED;
   }
-  
+
   packetbuf_compact();
   if(!NETSTACK_LLSEC.on_frame_created()) {
     PRINTF("contikimac-framer: securing failed\n");
     return FRAMER_FAILED;
   }
-  
+
   chdr = (struct hdr *)(((uint8_t *) packetbuf_dataptr()) - sizeof(struct hdr));
   chdr->len = packetbuf_datalen();
   pad();
-  
+  set_ind_seqno();
+
   return hdr_len;
 }
 /*---------------------------------------------------------------------------*/
@@ -181,27 +267,27 @@ parse(void)
 {
   int hdr_len;
   struct hdr *chdr;
-  
+
   hdr_len = DECORATED_FRAMER.parse();
   if(hdr_len < 0) {
     return FRAMER_FAILED;
   }
-  
+
   chdr = packetbuf_dataptr();
   if(chdr->id != CONTIKIMAC_ID) {
     PRINTF("contikimac-framer: CONTIKIMAC_ID is missing\n");
     return FRAMER_FAILED;
   }
-  
+
   if(!packetbuf_hdrreduce(sizeof(struct hdr))) {
     PRINTF("contikimac-framer: packetbuf_hdrreduce failed\n");
     return FRAMER_FAILED;
   }
-  
+
   packetbuf_set_datalen(chdr->len);
   chdr->len = 0;
   // printf("Received phase: %d %X %X\n", chdr->tx_offset, chdr->tx_offset, get_tx_offset());
-  
+
   return hdr_len + sizeof(struct hdr);
 }
 /*---------------------------------------------------------------------------*/
