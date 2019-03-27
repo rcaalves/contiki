@@ -246,11 +246,13 @@ static volatile unsigned char radio_is_on = 0;
 static struct compower_activity current_packet;
 #endif /* CONTIKIMAC_CONF_COMPOWER */
 
-#if WITH_PHASE_OPTIMIZATION
-
+#if WITH_PHASE_OPTIMIZATION || RDC_UNIDIR_SUPPORT
 #include "net/mac/phase.h"
-
 #endif /* WITH_PHASE_OPTIMIZATION */
+
+#if RDC_UNIDIR_SUPPORT && !WITH_PHASE_OPTIMIZATION
+#warning RDC_UNIDIR_SUPPORT is set, but WITH_PHASE_OPTIMIZATION is disabled
+#endif
 
 #define DEFAULT_STREAM_TIME (4 * CYCLE_TIME)
 
@@ -623,9 +625,11 @@ send_packet(mac_callback_t mac_callback, void *mac_callback_ptr,
     }
   }
 
+#if RDC_UNIDIR_SUPPORT
   if ( packetbuf_attr(PACKETBUF_ATTR_L3_REQ_ACK) == phase_is_unidir(packetbuf_addr(PACKETBUF_ADDR_RECEIVER)) ) {
     phase_remove(packetbuf_addr(PACKETBUF_ADDR_RECEIVER));
   }
+#endif
 
   // printf("ptrprint: %p (11) %p\n", &(((uint8_t*)packetbuf_hdrptr())[11]), &(((uint8_t*)packetbuf_hdrptr())[12]) );
   // printf("ptrprint: %p (packetbuf_dataptr)\n", packetbuf_dataptr());

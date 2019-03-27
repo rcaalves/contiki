@@ -257,7 +257,9 @@ create_and_secure(void)
   chdr = (struct hdr *)(((uint8_t *) packetbuf_dataptr()) - sizeof(struct hdr));
   chdr->len = packetbuf_datalen();
   pad();
+#if RDC_UNIDIR_SUPPORT
   set_ind_seqno();
+#endif
 
   return hdr_len;
 }
