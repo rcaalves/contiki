@@ -138,7 +138,9 @@ phase_update(const linkaddr_t *neighbor, rtimer_clock_t time,
   /* If we have an entry for this neighbor already, we renew it. */
   e = nbr_table_get_from_lladdr(nbr_phase, neighbor);
   if(e != NULL) {
+#if RDC_UNIDIR_SUPPORT
     e->is_unidir = 0;
+#endif
     if(mac_status == MAC_TX_OK) {
 #if PHASE_DRIFT_CORRECT
       e->drift = time-e->time;
