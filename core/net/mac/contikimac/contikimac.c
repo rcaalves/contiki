@@ -662,7 +662,7 @@ send_packet(mac_callback_t mac_callback, void *mac_callback_ptr,
                      CYCLE_TIME, GUARD_TIME,
                      mac_callback, mac_callback_ptr, buf_list);
     if(ret == PHASE_DEFERRED) {
-      printf("DEFERRED\n");
+      PRINTF("DEFERRED\n");
       return MAC_TX_DEFERRED;
     }
     if(ret != PHASE_UNKNOWN) {
@@ -1104,7 +1104,7 @@ input_packet(void)
 
 #if RDC_UNIDIR_SUPPORT
       if (skip_phase_assessment) {
-        printf("phase: skip_phase_assessment\n");
+        PRINTF("phase: skip_phase_assessment\n");
         return;
       }
       skip_phase_assessment = 1;

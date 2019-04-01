@@ -150,7 +150,6 @@ set_ind_seqno(void)
 {
   int i;
 
-  printf("%d ", packetbuf_addr(PACKETBUF_ADDR_RECEIVER)->u16);
   if(packetbuf_holds_broadcast()) {
     set_ind_seqno_hdr(bcast_seqno++);
     return;

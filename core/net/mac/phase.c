@@ -92,7 +92,7 @@ NBR_TABLE(struct phase, nbr_phase);
 /*---------------------------------------------------------------------------*/
 #if RDC_UNIDIR_SUPPORT
 void phase_update_unidir(const linkaddr_t *neighbor_outbound, rtimer_clock_t time) {
-  printf("phase_update_unidir: outbound neighbor: %04X, phase: %u \n", neighbor_outbound->u16, time);
+  PRINTF("phase_update_unidir: outbound neighbor: %04X, phase: %u \n", neighbor_outbound->u16, time);
   // phase_update(neighbor_outbound, time, MAC_TX_OK);
   struct phase *e;
 
