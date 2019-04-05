@@ -626,7 +626,8 @@ send_packet(mac_callback_t mac_callback, void *mac_callback_ptr,
   }
 
 #if RDC_UNIDIR_SUPPORT
-  if ( packetbuf_attr(PACKETBUF_ATTR_L3_REQ_ACK) == phase_is_unidir(packetbuf_addr(PACKETBUF_ADDR_RECEIVER)) ) {
+  if (!is_broadcast && packetbuf_attr(PACKETBUF_ATTR_L3_REQ_ACK) == phase_is_unidir(packetbuf_addr(PACKETBUF_ADDR_RECEIVER)) ) {
+    // Requires ACK, but phase is unidir OR Does not require ACK, but phase is not unidir
     phase_remove(packetbuf_addr(PACKETBUF_ADDR_RECEIVER));
   }
 #endif
@@ -662,7 +663,6 @@ send_packet(mac_callback_t mac_callback, void *mac_callback_ptr,
                      CYCLE_TIME, GUARD_TIME,
                      mac_callback, mac_callback_ptr, buf_list);
     if(ret == PHASE_DEFERRED) {
-      PRINTF("DEFERRED\n");
       return MAC_TX_DEFERRED;
     }
     if(ret != PHASE_UNKNOWN) {
@@ -1199,6 +1199,7 @@ init(void)
 #endif /* WITH_PHASE_OPTIMIZATION */
 
 #if RDC_UNIDIR_SUPPORT
+  printf("RDC_UNIDIR_SUPPORT\n");
   list_init(outbound_phases_list);
   memb_init(&obn);
 #endif

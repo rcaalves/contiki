@@ -57,10 +57,17 @@ struct phase {
 #endif
   uint8_t noacks;
   struct timer noacks_timer;
+  uint8_t control_flags;
+/*
 #if RDC_UNIDIR_SUPPORT
   uint8_t is_unidir;
 #endif
+  uint8_t deferred_count;
+*/
 };
+
+#define IS_UNIDIR 0x01
+#define IS_DEFERRED 0x08
 
 struct phase_queueitem {
   struct ctimer timer;
@@ -80,7 +87,7 @@ struct phase_queueitem {
 MEMB(queued_packets_memb, struct phase_queueitem, PHASE_QUEUESIZE);
 NBR_TABLE(struct phase, nbr_phase);
 
-#define DEBUG 1
+#define DEBUG 0
 #if DEBUG
 #include <stdio.h>
 #define PRINTF(...) printf(__VA_ARGS__)
@@ -104,7 +111,7 @@ void phase_update_unidir(const linkaddr_t *neighbor_outbound, rtimer_clock_t tim
 #endif
     e->time = time;
     e->noacks = 0;
-    e->is_unidir = 1;
+    e->control_flags = (e->control_flags | IS_UNIDIR);
   } else {
     e = nbr_table_add_lladdr(nbr_phase, neighbor_outbound);
     if(e) {
@@ -113,7 +120,7 @@ void phase_update_unidir(const linkaddr_t *neighbor_outbound, rtimer_clock_t tim
       e->drift = 0;
 #endif
       e->noacks = 0;
-      e->is_unidir = 1;
+      e->control_flags = IS_UNIDIR;
     }
   }
 }
@@ -123,7 +130,7 @@ uint8_t phase_is_unidir(const linkaddr_t *neighbor) {
 
   e = nbr_table_get_from_lladdr(nbr_phase, neighbor);
   if(e != NULL) {
-    return e->is_unidir;
+    return e->control_flags & IS_UNIDIR;
   }
   return 0;
 }
@@ -139,7 +146,7 @@ phase_update(const linkaddr_t *neighbor, rtimer_clock_t time,
   e = nbr_table_get_from_lladdr(nbr_phase, neighbor);
   if(e != NULL) {
 #if RDC_UNIDIR_SUPPORT
-    e->is_unidir = 0;
+    e->control_flags = (e->control_flags & ~IS_UNIDIR);
 #endif
     if(mac_status == MAC_TX_OK) {
 #if PHASE_DRIFT_CORRECT
@@ -174,9 +181,7 @@ phase_update(const linkaddr_t *neighbor, rtimer_clock_t time,
         e->drift = 0;
 #endif
         e->noacks = 0;
-#if RDC_UNIDIR_SUPPORT
-        e->is_unidir = 0;
-#endif
+        e->control_flags = 0;
       }
     }
   }
@@ -262,6 +267,12 @@ phase_wait(const linkaddr_t *neighbor, rtimer_clock_t cycle_time,
     if(ctimewait > PHASE_DEFER_THRESHOLD) {
       struct phase_queueitem *p;
 
+      if (e->control_flags & IS_DEFERRED) {
+        nbr_table_remove(nbr_phase, e);
+        PRINTF("DEFERRED twice!\n");
+        return PHASE_UNKNOWN;
+      }
+
       p = memb_alloc(&queued_packets_memb);
       if(p != NULL) {
         if(buf_list == NULL) {
@@ -272,9 +283,12 @@ phase_wait(const linkaddr_t *neighbor, rtimer_clock_t cycle_time,
         p->mac_callback_ptr = mac_callback_ptr;
         p->buf_list = buf_list;
         ctimer_set(&p->timer, ctimewait, send_packet, p);
+        PRINTF("DEFERRED b \n");
+        e->control_flags |= IS_DEFERRED;
         return PHASE_DEFERRED;
       }
     }
+    e->control_flags &= ~IS_DEFERRED;
 
     expected = now + wait - guard_time;
     if(!RTIMER_CLOCK_LT(expected, now)) {
@@ -321,6 +335,11 @@ phase_wait_unidir(const linkaddr_t *neighbor, rtimer_clock_t cycle_time,
       struct phase_queueitem *p;
       // printf("phase deferered! ctimewait %lu (wait %u, e->time %u, now %u, cycle_start %u, guard %u)\n", ctimewait, wait, e->time, now, cycle_start, guard_time);
 
+      if (e->control_flags & IS_DEFERRED) {
+        nbr_table_remove(nbr_phase, e);
+        return PHASE_UNKNOWN;
+      }
+
       p = memb_alloc(&queued_packets_memb);
       if(p != NULL) {
         if(buf_list == NULL) {
@@ -331,9 +350,12 @@ phase_wait_unidir(const linkaddr_t *neighbor, rtimer_clock_t cycle_time,
         p->mac_callback_ptr = mac_callback_ptr;
         p->buf_list = buf_list;
         ctimer_set(&p->timer, ctimewait, send_packet, p);
+        PRINTF("DEFERRED u \n");
+        e->control_flags |= IS_DEFERRED;
         return PHASE_DEFERRED;
       }
     }
+    e->control_flags &= ~IS_DEFERRED;
 
     expected = now + wait - guard_time;
     if(!RTIMER_CLOCK_LT(expected, now)) {
